@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV Data Acquisition & Analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background-color: #eef2f5; color: #333; font-family: 'Segoe UI', Tahoma, sans-serif;
+            margin: 0; padding: 10px; font-size: 13px;
+        }
+        .toolbar {
+            background-color: #fff; padding: 10px 15px; border: 1px solid #ccc; border-radius: 4px;
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+        }
+        .toolbar h2 { margin: 0; font-size: 16px; color: #2c3e50; }
+        .btn {
+            padding: 6px 15px; border: 1px solid #aaa; background-color: #f8f9fa; cursor: pointer;
+            font-weight: bold; font-size: 12px; border-radius: 3px;
+        }
+        .btn-connect { background-color: #28a745; color: white; border-color: #218838; }
+        .btn-export { background-color: #007bff; color: white; border-color: #0062cc; }
+        
+        .main-container { display: flex; gap: 10px; height: calc(100vh - 70px); }
+        
+        /* Cột trái: Bảng số liệu và Log */
+        .sidebar { width: 320px; display: flex; flex-direction: column; gap: 10px; }
+        .panel { background-color: #fff; border: 1px solid #ccc; border-radius: 4px; display: flex; flex-direction: column; }
+        .panel-header { background-color: #e2e6ea; padding: 6px 10px; font-weight: bold; border-bottom: 1px solid #ccc; font-size: 12px; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        td { padding: 4px 10px; border-bottom: 1px solid #eee; }
+        .lbl { color: #555; font-size: 11px; }
+        .val { font-family: 'Consolas', 'Courier New', monospace; font-weight: bold; text-align: right; font-size: 13px; color: #0056b3; }
+        
+        .terminal {
+            flex-grow: 1; background-color: #1e1e1e; color: #00ff00; font-family: 'Consolas', monospace;
+            font-size: 11px; padding: 8px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4;
+        }
+
+        /* Cột phải: Đồ thị */
+        .charts-area { flex-grow: 1; display: flex; flex-direction: column; gap: 10px; }
+        .chart-box { background-color: #fff; border: 1px solid #ccc; border-radius: 4px; flex: 1; padding: 10px; position: relative; }
+    </style>
+</head>
+<body>
+
+    <div class="toolbar">
+        <h2>AGV DAQ & ANALYZER V1.0</h2>
+        <div>
+            <span style="margin-right: 15px; font-family: monospace;">Ghi log: <span id="logCount">0</span> dòng</span>
+            <button class="btn btn-export" id="exportBtn">💾 XUẤT FILE CSV</button>
+            <button class="btn btn-connect" id="connectBtn">🔌 KẾT NỐI CỔNG COM</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="panel">
+                <div class="panel-header">BẢNG DỮ LIỆU THỜI GIAN THỰC</div>
+                <table>
+                    <tr><td class="lbl">Trạng thái (State)</td><td class="val" id="vState">-</td></tr>
+                    <tr><td class="lbl">Chu kỳ quét (dt)</td><td class="val" id="vDt">-</td></tr>
+                    <tr><td class="lbl">Sai số (Error)</td><td class="val" id="vErr">-</td></tr>
+                    <tr><td class="lbl">Đón cua (P_Err)</td><td class="val" id="vPerr">-</td></tr>
+                    <tr><td class="lbl">Tín hiệu vạch (Conf)</td><td class="val" id="vConf">-</td></tr>
+                    <tr><td class="lbl">Ngã tư (Cross)</td><td class="val" id="vCross">-</td></tr>
+                    <tr><td class="lbl">Góc vô lăng (Steer)</td><td class="val" id="vSteer">-</td></tr>
+                    <tr><td class="lbl">P-Term</td><td class="val" id="vP">-</td></tr>
+                    <tr><td class="lbl">I-Term</td><td class="val" id="vI">-</td></tr>
+                    <tr><td class="lbl">D-Term</td><td class="val" id="vD">-</td></tr>
+                    <tr><td class="lbl">Vận tốc Đích (T_RPM)</td><td class="val" id="vTrpm">-</td></tr>
+                    <tr><td class="lbl">Vận tốc Thực (A_RPM)</td><td class="val" id="vArpm">-</td></tr>
+                    <tr><td class="lbl">Bù dòng (Boost PWM)</td><td class="val" id="vBst">-</td></tr>
+                    <tr><td class="lbl">Bánh Trái (PWM)</td><td class="val" id="vPwml">-</td></tr>
+                    <tr><td class="lbl">Bánh Phải (PWM)</td><td class="val" id="vPwmr">-</td></tr>
+                </table>
+            </div>
+
+            <div class="panel" style="flex-grow: 1; overflow: hidden;">
+                <div class="panel-header">RAW DATA STREAM</div>
+                <div class="terminal" id="terminal"></div>
+            </div>
+        </div>
+
+        <div class="charts-area">
+            <div class="chart-box">
+                <canvas id="pidChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <canvas id="rpmChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CẤU HÌNH ĐỒ THỊ CHUẨN KỸ THUẬT (Mảnh, rõ ràng, không màu mè)
+        Chart.defaults.font.size = 11;
+        Chart.defaults.elements.point.radius = 0;
+        Chart.defaults.elements.line.borderWidth = 1.5;
+        const chartOptions = { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false } };
+
+        const pidChart = new Chart(document.getElementById('pidChart'), {
+            type: 'line',
+            data: { labels: [], datasets: [
+                { label: 'Error (Lệch)', borderColor: '#dc3545', data: [] },
+                { label: 'Steer (Góc lái)', borderColor: '#007bff', data: [] },
+                { label: 'P-Term', borderColor: '#28a745', borderDash: [2,2], data: [] },
+                { label: 'D-Term', borderColor: '#fd7e14', borderDash: [2,2], data: [] }
+            ]},
+            options: { ...chartOptions, plugins: { title: { display: true, text: 'PHÂN TÍCH ĐÁP ỨNG PID' } } }
+        });
+
+        const rpmChart = new Chart(document.getElementById('rpmChart'), {
+            type: 'line',
+            data: { labels: [], datasets: [
+                { label: 'Target RPM', borderColor: '#6c757d', borderDash: [5,5], data: [] },
+                { label: 'Actual RPM', borderColor: '#17a2b8', data: [] },
+                { label: 'PWM Left', borderColor: '#6610f2', data: [], yAxisID: 'y1' },
+                { label: 'PWM Right', borderColor: '#e83e8c', data: [], yAxisID: 'y1' }
+            ]},
+            options: { 
+                ...chartOptions, 
+                plugins: { title: { display: true, text: 'ĐỘNG LỰC HỌC (VẬN TỐC & ĐIỆN ÁP)' } },
+                scales: { 
+                    y: { type: 'linear', display: true, position: 'left', title: {display: true, text: 'RPM'} },
+                    y1: { type: 'linear', display: true, position: 'right', title: {display: true, text: 'PWM'} }
+                }
+            }
+        });
+
+        // HỆ THỐNG LƯU TRỮ DỮ LIỆU ĐỂ XUẤT CSV
+        let dataLog = [];
+        const MAX_PLOT_PTS = 150; // Hiển thị 150 điểm trên đồ thị cho chi tiết
+        let plotIdx = 0;
+
+        function updateSystem(dataObj) {
+            // 1. Cập nhật Bảng số
+            document.getElementById('vState').innerText = dataObj.state;
+            document.getElementById('vDt').innerText = dataObj.dt + " ms";
+            document.getElementById('vErr').innerText = dataObj.err;
+            document.getElementById('vPerr').innerText = dataObj.perr;
+            document.getElementById('vConf').innerText = dataObj.conf;
+            document.getElementById('vCross').innerText = dataObj.cross;
+            document.getElementById('vSteer').innerText = dataObj.steer;
+            document.getElementById('vP').innerText = dataObj.p;
+            document.getElementById('vI').innerText = dataObj.i;
+            document.getElementById('vD').innerText = dataObj.d;
+            document.getElementById('vTrpm').innerText = dataObj.trpm;
+            document.getElementById('vArpm').innerText = dataObj.arpm;
+            document.getElementById('vBst').innerText = dataObj.bst;
+            document.getElementById('vPwml').innerText = dataObj.pwml;
+            document.getElementById('vPwmr').innerText = dataObj.pwmr;
+
+            // 2. Cập nhật Đồ thị
+            plotIdx++;
+            pidChart.data.labels.push(plotIdx);
+            pidChart.data.datasets[0].data.push(dataObj.err);
+            pidChart.data.datasets[1].data.push(dataObj.steer);
+            pidChart.data.datasets[2].data.push(dataObj.p);
+            pidChart.data.datasets[3].data.push(dataObj.d);
+
+            rpmChart.data.labels.push(plotIdx);
+            rpmChart.data.datasets[0].data.push(dataObj.trpm);
+            rpmChart.data.datasets[1].data.push(dataObj.arpm);
+            rpmChart.data.datasets[2].data.push(dataObj.pwml);
+            rpmChart.data.datasets[3].data.push(dataObj.pwmr);
+
+            if (plotIdx > MAX_PLOT_PTS) {
+                pidChart.data.labels.shift(); pidChart.data.datasets.forEach(d => d.data.shift());
+                rpmChart.data.labels.shift(); rpmChart.data.datasets.forEach(d => d.data.shift());
+            }
+            pidChart.update(); rpmChart.update();
+
+            // 3. Lưu vào bộ nhớ xuất CSV
+            dataLog.push(dataObj);
+            document.getElementById('logCount').innerText = dataLog.length;
+        }
+
+        // TÍNH NĂNG XUẤT CSV (Thu thập dữ liệu làm đồ án)
+        document.getElementById('exportBtn').addEventListener('click', () => {
+            if (dataLog.length === 0) { alert("Chưa có dữ liệu nào được ghi!"); return; }
+            
+            let csvContent = "data:text/csv;charset=utf-8,";
+            // Header
+            csvContent += "Time_ms,State,Error,Preview_Err,Conf,Cross,Steer,P_Term,I_Term,D_Term,Target_RPM,Actual_RPM,Boost_PWM,PWM_L,PWM_R,RPM_L,RPM_R,Loop_dt\n";
+            
+            // Data rows
+            let startTime = dataLog[0].timestamp;
+            dataLog.forEach(row => {
+                let t = row.timestamp - startTime;
+                csvContent += `${t},${row.state},${row.err},${row.perr},${row.conf},${row.cross},${row.steer},${row.p},${row.i},${row.d},${row.trpm},${row.arpm},${row.bst},${row.pwml},${row.pwmr},${row.rpml},${row.rpmr},${row.dt}\n`;
+            });
+
+            // Download
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "AGV_Data_Analysis.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        // XỬ LÝ KẾT NỐI CỔNG COM
+        let port, reader;
+        const terminal = document.getElementById('terminal');
+
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            if (port) {
+                await reader.cancel(); await port.close(); port = null;
+                document.getElementById('connectBtn').innerText = "🔌 KẾT NỐI CỔNG COM";
+                document.getElementById('connectBtn').style.backgroundColor = "#28a745";
+                return;
+            }
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 }); 
+                document.getElementById('connectBtn').innerText = "🛑 NGẮT KẾT NỐI";
+                document.getElementById('connectBtn').style.backgroundColor = "#dc3545";
+
+                const textDecoder = new TextDecoderStream();
+                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+                reader = textDecoder.readable.getReader();
+
+                let buffer = "";
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) { reader.releaseLock(); break; }
+                    
+                    buffer += value; let lines = buffer.split('\n'); buffer = lines.pop(); 
+
+                    for (let line of lines) {
+                        line = line.trim();
+                        if (line.length === 0) continue;
+                        
+                        // In ra terminal
+                        terminal.innerHTML += line + "<br>";
+                        if (terminal.innerHTML.length > 5000) terminal.innerHTML = terminal.innerHTML.substring(2000);
+                        terminal.scrollTop = terminal.scrollHeight;
+
+                        // Bóc tách dữ liệu
+                        const regex = /> ([A-Z]+) \| ERR:([-.\d]+) \| P_ERR:([-.\d]+) \| CONF:([-.\d]+) \| CROSS:([-.\d]+) \| STR:([-.\d]+) \| P:([-.\d]+) \| I:([-.\d]+) \| D:([-.\d]+) \| TRPM:([-.\d]+) \| ARPM:([-.\d]+) \| BST:([-.\d]+) \| PWML:([-.\d]+) \| PWMR:([-.\d]+) \| RPML:([-.\d]+) \| RPMR:([-.\d]+) \| DT:([-.\d]+)/;
+                        const match = line.match(regex);
+
+                        if (match) {
+                            let dataObj = {
+                                timestamp: Date.now(),
+                                state: match[1], err: match[2], perr: match[3], conf: match[4], cross: match[5],
+                                steer: match[6], p: match[7], i: match[8], d: match[9],
+                                trpm: match[10], arpm: match[11], bst: match[12],
+                                pwml: match[13], pwmr: match[14], rpml: match[15], rpmr: match[16], dt: match[17]
+                            };
+                            updateSystem(dataObj);
+                        }
+                    }
+                }
+            } catch (error) { console.error(error); alert("Lỗi cổng COM. Đảm bảo đã cắm cáp và tắt phần mềm Arduino IDE!"); }
+        });
+    </script>
+</body>
+</html>
